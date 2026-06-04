@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+  body { @apply bg-slate-50 text-slate-900 antialiased; font-family: 'Inter', system-ui, sans-serif; }
+}
+
+@layer components {
+  .card          { @apply bg-white rounded-2xl border border-slate-100 shadow-sm; }
+  .btn-primary   { @apply inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white font-medium text-sm hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors; }
+  .btn-secondary { @apply inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-medium text-sm hover:bg-slate-200 transition-colors disabled:opacity-50; }
+  .btn-danger    { @apply inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-red-500 text-white font-medium text-sm hover:bg-red-600 transition-colors; }
+  .btn-ghost     { @apply inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-slate-500 text-sm hover:bg-slate-100 transition-colors; }
+  .btn-lg        { @apply px-5 py-2.5; }
+  .btn-sm        { @apply px-2.5 py-1 text-xs; }
+  .label         { @apply block text-xs font-medium text-slate-600 mb-1; }
+  .input         { @apply w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition placeholder:text-slate-300; }
+  .stat-card     { @apply card p-4 flex flex-col gap-1; }
+  .stat-value    { @apply text-xl font-bold text-slate-900 tabular-nums; }
+  .stat-label    { @apply text-xs text-slate-400 font-medium; }
+  .table-row     { @apply border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors; }
+  .page-title    { @apply text-2xl font-bold text-slate-900; }
+  .page-subtitle { @apply text-sm text-slate-400 mt-0.5; }
+  .badge         { @apply inline-block px-2 py-0.5 rounded-full text-xs font-medium; }
+  .badge-green   { @apply bg-emerald-50 text-emerald-600; }
+  .badge-yellow  { @apply bg-amber-50 text-amber-600; }
+  .badge-red     { @apply bg-red-50 text-red-600; }
+  .badge-gray    { @apply bg-slate-100 text-slate-500; }
+  .spinner       { @apply inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin; }
+}
