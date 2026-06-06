@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -8,44 +8,11 @@ import {
   X,
 } from "lucide-react";
 import * as api from "../api/client";
-import { minsToHHMM, monthLabel, isWeekend } from "../utils/time";
+import { minsToHHMM, monthLabel, isWeekend, todayStr } from "../utils/time";
+import { fetchHolidays } from "../utils/holidays";
+import { useAuth } from "../hooks/useAuth"; 
 import { toast } from "sonner";
 import EntryModal from "../components/EntryModal";
-
-// ─── Holiday fetching (nager.date — free, no auth) ────────────────────────────
-interface NagerHoliday {
-  date: string; // "2026-01-01"
-  localName: string;
-  name: string;
-  global: boolean;
-  counties: string[] | null;
-}
-
-// Cache by year so we only fetch once per year
-const holidayCache = new Map<number, Map<string, string>>();
-
-async function fetchBavariaHolidays(
-  year: number,
-): Promise<Map<string, string>> {
-  if (holidayCache.has(year)) return holidayCache.get(year)!;
-  try {
-    const res = await fetch(
-      `https://date.nager.at/api/v3/PublicHolidays/${year}/DE`,
-    );
-    if (!res.ok) throw new Error("Failed");
-    const data: NagerHoliday[] = await res.json();
-    const map = new Map<string, string>();
-    for (const h of data) {
-      // Include if global (nationwide) OR applies to Bavaria (DE-BY)
-      const isBavaria = h.global || h.counties?.includes("DE-BY") || false;
-      if (isBavaria) map.set(h.date, h.localName);
-    }
-    holidayCache.set(year, map);
-    return map;
-  } catch {
-    return new Map();
-  }
-}
 
 // ─── Vacation range modal ─────────────────────────────────────────────────────
 interface VacationRangeModalProps {
@@ -59,18 +26,17 @@ function VacationRangeModal({
   onClose,
   holidays,
 }: VacationRangeModalProps) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
   const [saving, setSaving] = useState(false);
 
-  // Count working days (skip weekends + holidays)
   const countWorkingDays = () => {
     let count = 0;
     const cur = new Date(from + "T00:00:00");
     const end = new Date(to + "T00:00:00");
     while (cur <= end) {
-      const ds = cur.toISOString().slice(0, 10);
+      const ds = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
       const dow = cur.getDay();
       if (dow !== 0 && dow !== 6 && !holidays.has(ds)) count++;
       cur.setDate(cur.getDate() + 1);
@@ -149,7 +115,6 @@ function VacationRangeModal({
               ⛔ Start date must be before or equal to end date.
             </p>
           )}
-
           {!isInvalid && workDays > 0 && (
             <p className="text-xs text-emerald-700 font-medium bg-emerald-50 px-3 py-2 rounded-xl">
               ✅ {workDays} working day{workDays !== 1 ? "s" : ""} will be
@@ -157,7 +122,6 @@ function VacationRangeModal({
               automatically.
             </p>
           )}
-
           {!isInvalid && workDays === 0 && from <= to && (
             <p className="text-xs text-amber-700 font-medium bg-amber-50 px-3 py-2 rounded-xl">
               ⚠️ No working days in this range (all weekends or holidays).
@@ -192,6 +156,7 @@ function VacationRangeModal({
 
 // ─── Main CalendarView ────────────────────────────────────────────────────────
 export default function CalendarView() {
+  const { user } = useAuth();
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -227,12 +192,12 @@ export default function CalendarView() {
     load();
   }, [load]);
 
-  // ── Load Bavaria holidays whenever year changes ─────────────────────────────
+  // ── Load holidays based on user country ─────────────────────────────────────
   useEffect(() => {
-    fetchBavariaHolidays(year).then(setHolidays);
-    // Also prefetch next year if in December
-    if (month === 11) fetchBavariaHolidays(year + 1).then(() => {});
-  }, [year, month]);
+    const country = user?.country ?? "DE";
+    fetchHolidays(year, country).then(setHolidays);
+    if (month === 11) fetchHolidays(year + 1, country).then(() => {});
+  }, [year, month, user?.country]);
 
   // ── Navigation ──────────────────────────────────────────────────────────────
   const prev = () => {
@@ -252,10 +217,10 @@ export default function CalendarView() {
   const entryMap = new Map(entries.map((e) => [e.date, e]));
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstDow = (new Date(year, month, 1).getDay() + 6) % 7;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
   const DAY_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-  // ── Save single entry (from day-click modal) ────────────────────────────────
+  // ── Save single entry ───────────────────────────────────────────────────────
   const handleSave = async (
     payload: api.CreateTimeEntryPayload,
     id?: string,
@@ -305,11 +270,9 @@ export default function CalendarView() {
     const toCreate: string[] = [];
 
     while (cur <= end) {
-      const ds = cur.toISOString().slice(0, 10);
+      const ds = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
       const dow = cur.getDay();
-      // Skip weekends and holidays
       if (dow !== 0 && dow !== 6 && !holidays.has(ds)) {
-        // Skip days that already have any entry
         if (!entryMap.has(ds)) toCreate.push(ds);
       }
       cur.setDate(cur.getDate() + 1);
@@ -323,7 +286,6 @@ export default function CalendarView() {
     }
 
     try {
-      // Create all vacation entries in parallel
       await Promise.all(
         toCreate.map((date) =>
           api.createTimeEntry({
@@ -365,7 +327,6 @@ export default function CalendarView() {
           <h1 className="page-title">Calendar</h1>
           <p className="page-subtitle">Monthly overview</p>
         </div>
-        {/* Vacation range button */}
         <button
           onClick={() => setShowVacRange(true)}
           className="btn-secondary gap-2"
@@ -417,7 +378,6 @@ export default function CalendarView() {
       <div
         className={`card overflow-hidden transition-opacity duration-150 ${isLoading ? "opacity-50 pointer-events-none" : ""}`}
       >
-        {/* Day headers */}
         <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50">
           {DAY_HEADERS.map((d) => (
             <div
@@ -429,9 +389,7 @@ export default function CalendarView() {
           ))}
         </div>
 
-        {/* Day cells */}
         <div className="grid grid-cols-7">
-          {/* Leading empty cells */}
           {Array.from({ length: firstDow }).map((_, i) => (
             <div
               key={`e${i}`}
@@ -443,12 +401,10 @@ export default function CalendarView() {
             const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
             const entry = entryMap.get(dateStr);
             const weekend = isWeekend(dateStr);
-            const holiday = holidays.get(dateStr); // holiday name or undefined
-            const isBlocked = weekend || !!holiday; // weekends + holidays = blocked
+            const holiday = holidays.get(dateStr);
+            const isBlocked = weekend || !!holiday;
             const isToday = dateStr === today;
             const col = (firstDow + day - 1) % 7;
-
-            // Clickable: not blocked OR has an existing entry (to allow edit/view)
             const isClickable = !isBlocked || !!entry;
 
             const bg =
@@ -459,7 +415,7 @@ export default function CalendarView() {
                   : entry?.type === "sick"
                     ? "bg-red-50"
                     : holiday
-                      ? "bg-amber-50/60" // holiday tint
+                      ? "bg-amber-50/60"
                       : weekend
                         ? "bg-slate-50/60"
                         : "bg-white hover:bg-slate-50";
@@ -477,7 +433,6 @@ export default function CalendarView() {
                   ${isClickable ? "cursor-pointer" : "cursor-default"}
                 `}
               >
-                {/* Day number */}
                 <span
                   className={`
                   text-xs font-semibold leading-none
@@ -493,14 +448,12 @@ export default function CalendarView() {
                   {day}
                 </span>
 
-                {/* Holiday label (only if no entry — entry takes priority) */}
                 {holiday && !entry && (
                   <p className="mt-0.5 text-[9px] font-semibold text-amber-600 leading-tight truncate">
                     {holiday}
                   </p>
                 )}
 
-                {/* Work entry */}
                 {entry?.type === "work" && (
                   <div className="mt-1 space-y-0.5">
                     <p className="text-xs font-semibold text-blue-700 tabular-nums leading-tight">
@@ -511,22 +464,17 @@ export default function CalendarView() {
                     </p>
                   </div>
                 )}
-
-                {/* Vacation entry */}
                 {entry?.type === "vacation" && (
                   <p className="mt-1 text-[10px] font-semibold text-emerald-600">
                     Vacation
                   </p>
                 )}
-
-                {/* Sick entry */}
                 {entry?.type === "sick" && (
                   <p className="mt-1 text-[10px] font-semibold text-red-500">
                     Sick
                   </p>
                 )}
 
-                {/* Hover icons — only on non-blocked working days */}
                 {!entry && !isBlocked && (
                   <Plus
                     size={12}
@@ -561,7 +509,6 @@ export default function CalendarView() {
         ))}
       </div>
 
-      {/* Day-click modal */}
       {modal && (
         <EntryModal
           entry={modal.entry}
@@ -570,8 +517,6 @@ export default function CalendarView() {
           onClose={() => setModal(null)}
         />
       )}
-
-      {/* Vacation range modal */}
       {showVacRange && (
         <VacationRangeModal
           onSave={handleVacationRange}

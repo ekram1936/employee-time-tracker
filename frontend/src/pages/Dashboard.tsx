@@ -3,45 +3,14 @@ import { Play, Square, Plus, Edit3, Trash2, CalendarOff } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import * as api from "../api/client";
 import { minsToHHMM, todayStr, nowTimeStr, formatDate } from "../utils/time";
+import { fetchHolidays } from "../utils/holidays"; // ✅ new
 import { toast } from "sonner";
 import EntryModal from "../components/EntryModal";
-
-// ─── Bavaria holiday fetching ─────────────────────────────────────────────────
-interface NagerHoliday {
-  date: string;
-  localName: string;
-  global: boolean;
-  counties: string[] | null;
-}
-
-const holidayCache = new Map<number, Map<string, string>>();
-
-async function fetchBavariaHolidays(
-  year: number,
-): Promise<Map<string, string>> {
-  if (holidayCache.has(year)) return holidayCache.get(year)!;
-  try {
-    const res = await fetch(
-      `https://date.nager.at/api/v3/PublicHolidays/${year}/DE`,
-    );
-    if (!res.ok) throw new Error("Failed");
-    const data: NagerHoliday[] = await res.json();
-    const map = new Map<string, string>();
-    for (const h of data) {
-      if (h.global || h.counties?.includes("DE-BY"))
-        map.set(h.date, h.localName);
-    }
-    holidayCache.set(year, map);
-    return map;
-  } catch {
-    return new Map();
-  }
-}
 
 // ─── Weekend helper ───────────────────────────────────────────────────────────
 function isWeekend(dateStr: string): boolean {
   const day = new Date(dateStr + "T00:00:00").getDay();
-  return day === 0 || day === 6; // 0 = Sunday, 6 = Saturday
+  return day === 0 || day === 6;
 }
 
 function weekendLabel(dateStr: string): string {
@@ -77,11 +46,12 @@ export default function Dashboard() {
   const today = todayStr();
   const dailyTargetMins = (user?.daily_target_hours ?? 8) * 60;
 
-  // ─── Fetch Bavaria holidays for current year ────────────────────────────────
+  // ─── Fetch holidays based on user country ────────────────────────────────────
   useEffect(() => {
     const year = new Date().getFullYear();
-    fetchBavariaHolidays(year).then(setHolidays);
-  }, []);
+    const country = user?.country ?? "DE"; // ✅ was hardcoded DE+Bavaria
+    fetchHolidays(year, country).then(setHolidays);
+  }, [user?.country]); // ✅ re-fetches if country changes
 
   const todayHoliday = holidays.get(today);
   const todayIsWeekend = isWeekend(today);
@@ -109,7 +79,7 @@ export default function Dashboard() {
     } catch {}
   }, [session]);
 
-  // ─── Sync alreadyWorkedMins if entry edited while session is active ─────────
+  // ─── Sync alreadyWorkedMins ─────────────────────────────────────────────────
   useEffect(() => {
     if (!session?.existingEntryId) return;
     const updated = entries.find((e) => e.id === session.existingEntryId);
@@ -144,7 +114,7 @@ export default function Dashboard() {
     };
   }, [session]);
 
-  // ─── Shared block check ─────────────────────────────────────────────────────
+  // ─── Block check ────────────────────────────────────────────────────────────
   const checkCanClockIn = (): boolean => {
     if (todayIsWeekend) {
       toast.error("It's the weekend. You cannot clock in.");
@@ -166,13 +136,10 @@ export default function Dashboard() {
     return true;
   };
 
-  // ─── Clock in (fresh) ───────────────────────────────────────────────────────
+  // ─── Clock in ───────────────────────────────────────────────────────────────
   const startWork = () => {
     if (!checkCanClockIn()) return;
-    const hasWorkToday = entries.some(
-      (e) => e.date === today && e.type === "work",
-    );
-    if (hasWorkToday) {
+    if (entries.some((e) => e.date === today && e.type === "work")) {
       toast.error("You already have a work entry for today.");
       return;
     }
@@ -190,7 +157,6 @@ export default function Dashboard() {
   // ─── Resume ─────────────────────────────────────────────────────────────────
   const continueWork = async () => {
     if (!checkCanClockIn()) return;
-
     let freshEntries: api.TimeEntry[] = [];
     try {
       freshEntries = await api.getTimeEntries();
@@ -199,21 +165,17 @@ export default function Dashboard() {
       toast.error("Failed to load entries. Try again.");
       return;
     }
-
     const existing = freshEntries.find(
       (e) => e.date === today && e.type === "work",
     );
-
     if (!existing) {
       startWork();
       return;
     }
-
     if (existing.work_minutes >= 600) {
       toast.error("Daily 10 h net limit already reached.");
       return;
     }
-
     const s: Session = {
       startTime: new Date().toISOString(),
       localStart: nowTimeStr(),
@@ -248,7 +210,6 @@ export default function Dashboard() {
     const totalSpan = session.alreadyWorkedMins + sessionSpan;
     const breakMin = totalSpan > 600 ? 60 : totalSpan > 480 ? 30 : 0;
     const net = Math.max(0, totalSpan - breakMin);
-
     setSession(null);
 
     if (net > 600) {
@@ -393,19 +354,16 @@ export default function Dashboard() {
               );
               return;
             }
-            const hasNonWorkToday = entries.some(
+            const blocked = entries.find(
               (e) => e.date === today && e.type !== "work",
             );
-            if (hasNonWorkToday) {
-              const blocked = entries.find(
-                (e) => e.date === today && e.type !== "work",
-              );
+            if (blocked) {
               toast.error(
-                blocked?.type === "sick"
+                blocked.type === "sick"
                   ? "Sick day set. You cannot add work entries."
                   : "Vacation day set. You cannot add work entries.",
               );
-              if (blocked) setModal({ entry: blocked });
+              setModal({ entry: blocked });
               return;
             }
             setModal({});
@@ -419,7 +377,6 @@ export default function Dashboard() {
       {/* Clock widget */}
       <div className="card p-6 mb-6">
         {session ? (
-          // ── Active session ──────────────────────────────────────────────
           <div className="flex items-center justify-between">
             <div>
               <div className="flex items-center gap-2 mb-1">
@@ -446,7 +403,6 @@ export default function Dashboard() {
             </button>
           </div>
         ) : todayEntry ? (
-          // ── Entry exists, not clocked in ────────────────────────────────
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-slate-400 uppercase font-semibold tracking-wide mb-1">
@@ -474,7 +430,6 @@ export default function Dashboard() {
             </button>
           </div>
         ) : todayIsWeekend ? (
-          // ── Weekend ─────────────────────────────────────────────────────
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-slate-400 uppercase font-semibold tracking-wide mb-1">
@@ -492,7 +447,6 @@ export default function Dashboard() {
             </div>
           </div>
         ) : todayHoliday ? (
-          // ── Public holiday ───────────────────────────────────────────────
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-slate-400 uppercase font-semibold tracking-wide mb-1">
@@ -510,7 +464,6 @@ export default function Dashboard() {
             </div>
           </div>
         ) : todayVacationOrSick ? (
-          // ── Vacation / sick ──────────────────────────────────────────────
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-slate-400 uppercase font-semibold tracking-wide mb-1">
@@ -535,7 +488,6 @@ export default function Dashboard() {
             </button>
           </div>
         ) : (
-          // ── Ready to clock in ────────────────────────────────────────────
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-slate-400 uppercase font-semibold tracking-wide mb-1">
@@ -576,7 +528,7 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Recent entries table */}
+      {/* Recent entries */}
       <div className="card overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
           <h2 className="font-semibold text-slate-900">Recent entries</h2>

@@ -34,6 +34,7 @@ export interface User {
   email: string;
   department: string;
   position: string;
+  country: string;
   annual_vacation_days: number;
   daily_target_hours: number;
 }
@@ -58,6 +59,7 @@ export interface RegisterPayload {
   password: string;
   department: string;
   position: string;
+  country: string;
   annual_vacation_days?: number;
   daily_target_hours?: number;
 }
@@ -123,11 +125,15 @@ export async function login(email: string, password: string): Promise<void> {
   tok.set(data.access_token);
 }
 
+export async function register(p: RegisterPayload): Promise<void> {
+  const data = await post<{ access_token: string }>("/auth/register", p);
+  tok.set(data.access_token);
+}
+
 export const logout = () => tok.clear();
 export const hasToken = () => tok.has();
 
 // ─── Users ────────────────────────────────────────────────────────────────────
-export const register = (p: RegisterPayload) => post<User>("/users", p);
 export const getMe = () => get<User>("/users/me");
 export const updateMe = (id: string, p: Partial<RegisterPayload>) =>
   put<User>(`/users/${id}`, p);

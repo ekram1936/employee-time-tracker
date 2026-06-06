@@ -9,15 +9,16 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    name = Column(String(200),  nullable=False)
-    email = Column(String(255),  unique=True, nullable=False, index=True)
-    hashed_password = Column(String(255),  nullable=False)
-    department = Column(String(100),  default="")
-    position = Column(String(100),  default="")
-    annual_vacation_days = Column(Integer,       default=30)
-    used_vacation_days = Column(Integer,       default=0)
-    daily_target_hours = Column(Float,         default=8.0)
-    is_active = Column(Boolean,       default=True)
+    name = Column(String(200), nullable=False)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=False)
+    department = Column(String(100), default="")
+    position = Column(String(100), default="")
+    country = Column(String(10), default="DE")
+    annual_vacation_days = Column(Integer, default=30)
+    used_vacation_days = Column(Integer, default=0)
+    daily_target_hours = Column(Float, default=8.0)
+    is_active = Column(Boolean, default=True)
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

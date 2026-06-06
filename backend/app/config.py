@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
     ALLOWED_ORIGINS: str
+    ZEROBOUNCE_API_KEY: str
 
     @property
     def origins(self) -> List[str]:
