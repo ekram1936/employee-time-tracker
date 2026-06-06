@@ -11,12 +11,15 @@ A full-stack time tracking web application built with **FastAPI**, **React**, **
 - **Break auto-calculation** — German labor law compliant (30 min > 8h, 60 min > 10h)
 - **10-hour net daily cap** — enforced on both frontend and backend
 - **Vacation & sick day management** — via modal with notes
-- **Public holiday detection** — Bavaria (DE-BY) holidays via Nager.AT API
+- **Vacation range booking** — bulk-add vacation days, weekends and holidays skipped automatically
+- **Public holiday detection** — per user country via [Nager.Date](https://date.nager.at) API (38 countries supported)
+- **Weekend & holiday blocking** — cannot clock in on weekends or public holidays
 - **Monthly summary** — with overtime/deficit calculation
-- **CSV export** — full month export with all entry details
+- **CSV export** — full month export with employee info, summary section, and day-by-day entries
 - **JWT authentication** — secure login with 24h token expiry
-- **User profile** — configurable daily target hours and annual vacation days
-- **Responsive UI** — works on desktop and mobile
+- **Email validation** — ZeroBounce API integration blocks invalid, disposable, and fake emails on registration
+- **User profile** — configurable daily target hours, annual vacation days, and country
+- **Timezone-safe dates** — all date handling uses local time (no UTC midnight shift bug)
 
 ---
 
@@ -50,6 +53,12 @@ DATABASE_URL=postgresql://timetrack:timetrack123@postgres:5432/employee_tracking
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=1440
 ALLOWED_ORIGINS=["http://localhost:3000","http://localhost:5173"]
+
+# ZeroBounce email validation (https://zerobounce.net — 100 free credits)
+ZEROBOUNCE_API_KEY=your_zerobounce_api_key_here
+
+# App base URL (used for future email links)
+APP_URL=http://localhost:5173
 
 # Optional: seed a dev user on first startup (leave empty in production)
 SEED_EMAIL=
@@ -110,7 +119,7 @@ docker compose logs -f frontend
 
 Base URL: `http://localhost:8000/api`
 
-All endpoints except `/auth/login` and `POST /users` require:
+All endpoints except `/auth/login` and `/auth/register` require:
 
 ```
 Authorization: Bearer <jwt_token>
@@ -118,18 +127,18 @@ Authorization: Bearer <jwt_token>
 
 ### Auth
 
-| Method | Endpoint                | Description                     |
-| ------ | ----------------------- | ------------------------------- |
-| `POST` | `/auth/login`           | Login — returns JWT token       |
-| `POST` | `/auth/change-password` | Change password (authenticated) |
+| Method | Endpoint                | Description                              |
+| ------ | ----------------------- | ---------------------------------------- |
+| `POST` | `/auth/register`        | Register new user (ZeroBounce validated) |
+| `POST` | `/auth/login`           | Login — returns JWT token                |
+| `POST` | `/auth/change-password` | Change password (authenticated)          |
 
 ### Users
 
-| Method  | Endpoint    | Description                                           |
-| ------- | ----------- | ----------------------------------------------------- |
-| `POST`  | `/users`    | Register new user                                     |
-| `GET`   | `/users/me` | Get current user profile                              |
-| `PATCH` | `/users/me` | Update profile (name, department, target hours, etc.) |
+| Method  | Endpoint    | Description                                                        |
+| ------- | ----------- | ------------------------------------------------------------------ |
+| `GET`   | `/users/me` | Get current user profile                                           |
+| `PATCH` | `/users/me` | Update profile (name, department, position, country, target hours) |
 
 ### Time Entries
 
