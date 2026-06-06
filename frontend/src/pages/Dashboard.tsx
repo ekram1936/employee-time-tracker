@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Play, Square, Plus, Edit3, Trash2 } from "lucide-react";
+import { Play, Square, Plus, Edit3, Trash2, CalendarOff } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import * as api from "../api/client";
 import { minsToHHMM, todayStr, nowTimeStr, formatDate } from "../utils/time";
@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import EntryModal from "../components/EntryModal";
 
 // ─── Bavaria holiday fetching ─────────────────────────────────────────────────
-// Move to utils/holidays.ts and import from there if CalendarView also uses it
 interface NagerHoliday {
   date: string;
   localName: string;
@@ -37,6 +36,16 @@ async function fetchBavariaHolidays(
   } catch {
     return new Map();
   }
+}
+
+// ─── Weekend helper ───────────────────────────────────────────────────────────
+function isWeekend(dateStr: string): boolean {
+  const day = new Date(dateStr + "T00:00:00").getDay();
+  return day === 0 || day === 6; // 0 = Sunday, 6 = Saturday
+}
+
+function weekendLabel(dateStr: string): string {
+  return new Date(dateStr + "T00:00:00").getDay() === 6 ? "Saturday" : "Sunday";
 }
 
 // ─── Session type ─────────────────────────────────────────────────────────────
@@ -74,8 +83,8 @@ export default function Dashboard() {
     fetchBavariaHolidays(year).then(setHolidays);
   }, []);
 
-  // ─── Today's holiday name (if any) ─────────────────────────────────────────
   const todayHoliday = holidays.get(today);
+  const todayIsWeekend = isWeekend(today);
 
   // ─── Load entries ───────────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -112,7 +121,7 @@ export default function Dashboard() {
     }
   }, [entries]);
 
-  // ─── Elapsed timer: already worked + current live session ──────────────────
+  // ─── Elapsed timer ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!session) {
       setElapsed("00:00");
@@ -135,22 +144,31 @@ export default function Dashboard() {
     };
   }, [session]);
 
-  // ─── Clock in (fresh) ───────────────────────────────────────────────────────
-  const startWork = () => {
-    //Block on public holidays
+  // ─── Shared block check ─────────────────────────────────────────────────────
+  const checkCanClockIn = (): boolean => {
+    if (todayIsWeekend) {
+      toast.error("It's the weekend. You cannot clock in.");
+      return false;
+    }
     if (todayHoliday) {
       toast.error(
         `Today is a public holiday (${todayHoliday}). You cannot clock in.`,
       );
-      return;
+      return false;
     }
     const blocked = entries.find((e) => e.date === today && e.type !== "work");
     if (blocked) {
       toast.error(
         `${blocked.type === "sick" ? "Sick" : "Vacation"} day set. You cannot clock in.`,
       );
-      return;
+      return false;
     }
+    return true;
+  };
+
+  // ─── Clock in (fresh) ───────────────────────────────────────────────────────
+  const startWork = () => {
+    if (!checkCanClockIn()) return;
     const hasWorkToday = entries.some(
       (e) => e.date === today && e.type === "work",
     );
@@ -171,22 +189,8 @@ export default function Dashboard() {
 
   // ─── Resume ─────────────────────────────────────────────────────────────────
   const continueWork = async () => {
-    //Block on public holidays
-    if (todayHoliday) {
-      toast.error(
-        `Today is a public holiday (${todayHoliday}). You cannot clock in.`,
-      );
-      return;
-    }
-    const blocked = entries.find((e) => e.date === today && e.type !== "work");
-    if (blocked) {
-      toast.error(
-        `${blocked.type === "sick" ? "Sick" : "Vacation"} day set. You cannot clock in.`,
-      );
-      return;
-    }
+    if (!checkCanClockIn()) return;
 
-    // Fetch fresh — do NOT rely on stale React state closure
     let freshEntries: api.TimeEntry[] = [];
     try {
       freshEntries = await api.getTimeEntries();
@@ -200,7 +204,6 @@ export default function Dashboard() {
       (e) => e.date === today && e.type === "work",
     );
 
-    // Entry was deleted between render and click — fall back to fresh clock-in
     if (!existing) {
       startWork();
       return;
@@ -236,7 +239,6 @@ export default function Dashboard() {
     const [eh, em] = workEnd.split(":").map(Number);
     const sessionSpan = eh * 60 + em - (sh * 60 + sm);
 
-    // Midnight crossing guard
     if (sessionSpan < 0) {
       setSession(null);
       toast.error("Session crossed midnight. Please add the entry manually.");
@@ -247,7 +249,6 @@ export default function Dashboard() {
     const breakMin = totalSpan > 600 ? 60 : totalSpan > 480 ? 30 : 0;
     const net = Math.max(0, totalSpan - breakMin);
 
-    // Always clear session so timer stops
     setSession(null);
 
     if (net > 600) {
@@ -259,14 +260,12 @@ export default function Dashboard() {
 
     try {
       if (session.existingEntryId) {
-        // Resume path: UPDATE existing entry
         let originalStart = session.localStart;
         try {
           const fresh = await api.getTimeEntries();
           const orig = fresh.find((e) => e.id === session.existingEntryId);
           if (orig?.start_time) originalStart = orig.start_time;
         } catch {}
-
         await api.updateTimeEntry(session.existingEntryId, {
           date: session.date,
           start_time: originalStart,
@@ -276,7 +275,6 @@ export default function Dashboard() {
           type: "work",
         });
       } else {
-        // Fresh path: CREATE new entry
         await api.createTimeEntry({
           date: session.date,
           start_time: session.localStart,
@@ -385,7 +383,10 @@ export default function Dashboard() {
         </div>
         <button
           onClick={() => {
-            // Block adding work on holidays
+            if (todayIsWeekend) {
+              toast.error("It's the weekend. You cannot add work entries.");
+              return;
+            }
             if (todayHoliday) {
               toast.error(
                 `Today is a public holiday (${todayHoliday}). Cannot add work entries.`,
@@ -418,7 +419,7 @@ export default function Dashboard() {
       {/* Clock widget */}
       <div className="card p-6 mb-6">
         {session ? (
-          // ── Active session ────────────────────────────────────────────────
+          // ── Active session ──────────────────────────────────────────────
           <div className="flex items-center justify-between">
             <div>
               <div className="flex items-center gap-2 mb-1">
@@ -445,7 +446,7 @@ export default function Dashboard() {
             </button>
           </div>
         ) : todayEntry ? (
-          // ── Entry exists, not clocked in ──────────────────────────────────
+          // ── Entry exists, not clocked in ────────────────────────────────
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-slate-400 uppercase font-semibold tracking-wide mb-1">
@@ -472,8 +473,26 @@ export default function Dashboard() {
               {todayEntry.work_minutes >= 600 ? "Limit reached" : "Continue"}
             </button>
           </div>
+        ) : todayIsWeekend ? (
+          // ── Weekend ─────────────────────────────────────────────────────
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs text-slate-400 uppercase font-semibold tracking-wide mb-1">
+                {weekendLabel(today)}
+              </p>
+              <p className="text-lg font-semibold text-slate-700">
+                It's the weekend 🎉
+              </p>
+              <p className="text-xs text-slate-400 mt-1">
+                No work today — rest and recharge
+              </p>
+            </div>
+            <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center">
+              <span className="text-2xl select-none">🛋️</span>
+            </div>
+          </div>
         ) : todayHoliday ? (
-          // ── Public holiday ────────────────────────────────────────────────
+          // ── Public holiday ───────────────────────────────────────────────
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-slate-400 uppercase font-semibold tracking-wide mb-1">
@@ -486,10 +505,12 @@ export default function Dashboard() {
                 No work today — enjoy your day off 🎉
               </p>
             </div>
-            <span className="text-4xl select-none">🎌</span>
+            <div className="w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center">
+              <CalendarOff size={24} className="text-amber-500" />
+            </div>
           </div>
         ) : todayVacationOrSick ? (
-          // ── Vacation / sick ───────────────────────────────────────────────
+          // ── Vacation / sick ──────────────────────────────────────────────
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-slate-400 uppercase font-semibold tracking-wide mb-1">
@@ -514,7 +535,7 @@ export default function Dashboard() {
             </button>
           </div>
         ) : (
-          // ── Ready to clock in ─────────────────────────────────────────────
+          // ── Ready to clock in ────────────────────────────────────────────
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-slate-400 uppercase font-semibold tracking-wide mb-1">
@@ -592,7 +613,7 @@ export default function Dashboard() {
                       {e.end_time || "—"}
                     </td>
                     <td className="px-5 py-3 text-sm text-slate-400">
-                      {e.break_minutes}m
+                      {e.break_minutes ? `${e.break_minutes}m` : "—"}
                     </td>
                     <td className="px-5 py-3 text-sm font-semibold text-blue-700 tabular-nums">
                       {minsToHHMM(e.work_minutes)}

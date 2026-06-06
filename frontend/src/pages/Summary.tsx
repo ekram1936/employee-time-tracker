@@ -13,10 +13,9 @@ export default function Summary() {
   const [entries, setEntries] = useState<api.TimeEntry[]>([]);
   const [freshTarget, setFreshTarget] = useState<number | null>(null);
 
-  // DB-first: freshTarget from getMe(), falls back to auth, then 8
   const dailyTargetHours = freshTarget ?? user?.daily_target_hours ?? 8;
 
-  // ─── Load entries + fresh user profile in parallel ──────────────────────────
+  // ─── Load entries + fresh user profile ──────────────────────────────────────
   const load = useCallback(async () => {
     const m = String(month + 1).padStart(2, "0");
     const last = new Date(year, month + 1, 0).getDate();
@@ -26,7 +25,7 @@ export default function Summary() {
           `${year}-${m}-01`,
           `${year}-${m}-${String(last).padStart(2, "0")}`,
         ),
-        api.getMe(), // fresh daily_target_hours
+        api.getMe(),
       ]);
       setEntries(data);
       setFreshTarget(freshUser.daily_target_hours);
@@ -59,36 +58,117 @@ export default function Summary() {
   const sickEntries = entries.filter((e) => e.type === "sick");
 
   const totalWork = workEntries.reduce((s, e) => s + e.work_minutes, 0);
-  const daysWorked = workEntries.length; // consistent — one entry per day per DB constraint
-
-  // Target = days actually worked × daily target
+  const daysWorked = workEntries.length;
   const target = daysWorked * dailyTargetHours * 60;
   const over = totalWork - target;
 
   // ─── CSV Export ──────────────────────────────────────────────────────────────
   const exportCSV = () => {
-    const rows = [
-      ["Date", "Type", "Start", "End", "Break (min)", "Worked (hh:mm)", "Note"],
-      ...[...entries]
-        .sort((a, b) => a.date.localeCompare(b.date))
-        .map((e) => [
+    const userName = (user?.name ?? "user").replace(/\s+/g, "_").toLowerCase();
+    const monthNum = String(month + 1).padStart(2, "0");
+    const monthName = new Date(year, month, 1)
+      .toLocaleString("en-GB", { month: "long" })
+      .toLowerCase();
+    const fileName = `${userName}_timesheet_${monthName}_${year}.csv`;
+
+    const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
+
+    // ── helper ───────────────────────────────────────────────────────────────
+    const row = (cols: string[]) => cols.map((c) => `"${c}"`).join(",");
+    const blank = () => "";
+
+    const lines: string[] = [];
+
+    // ── Section 1: Employee info ─────────────────────────────────────────────
+    lines.push(row(["TIMESHEET REPORT", ""]));
+    lines.push(row(["Employee", user?.name ?? "—"]));
+    lines.push(row(["Department", user?.department ?? "—"]));
+    lines.push(row(["Position", user?.position ?? "—"]));
+    lines.push(
+      row([
+        "Period",
+        `${monthName.charAt(0).toUpperCase() + monthName.slice(1)} ${year}`,
+      ]),
+    );
+    lines.push(
+      row([
+        "Generated",
+        new Date().toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "long",
+          year: "numeric",
+        }),
+      ]),
+    );
+    lines.push(blank());
+
+    // ── Section 2: Monthly summary ───────────────────────────────────────────
+    lines.push(row(["MONTHLY SUMMARY", ""]));
+    lines.push(row(["Days Worked", String(daysWorked)]));
+    lines.push(row(["Vacation Days", String(vacationEntries.length)]));
+    lines.push(row(["Sick Days", String(sickEntries.length)]));
+    lines.push(row(["Daily Target (h)", String(dailyTargetHours)]));
+    lines.push(row(["Total Hours Worked", minsToHHMM(totalWork)]));
+    lines.push(row(["Target Hours", minsToHHMM(target)]));
+    lines.push(
+      row([
+        over >= 0 ? "Overtime" : "Deficit",
+        `${over >= 0 ? "+" : "-"}${minsToHHMM(Math.abs(over))}`,
+      ]),
+    );
+    lines.push(blank());
+
+    // ── Section 3: Day-by-day entries ────────────────────────────────────────
+    lines.push(row(["DAILY ENTRIES", ""]));
+    lines.push(
+      row([
+        "Date",
+        "Day",
+        "Type",
+        "Start",
+        "End",
+        "Break (min)",
+        "Worked (hh:mm)",
+        "Note",
+      ]),
+    );
+
+    for (const e of sorted) {
+      const dayName = new Date(e.date + "T00:00:00").toLocaleString("en-GB", {
+        weekday: "long",
+      });
+      lines.push(
+        row([
           e.date,
+          dayName,
           e.type,
-          e.start_time || "",
-          e.end_time || "",
+          e.start_time || "—",
+          e.end_time || "—",
           String(e.break_minutes),
-          minsToHHMM(e.work_minutes),
+          e.type === "work" ? minsToHHMM(e.work_minutes) : "—",
           e.note || "",
         ]),
-    ];
-    const csv = rows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+      );
+    }
+
+    lines.push(blank());
+
+    // ── Section 4: Totals row ────────────────────────────────────────────────
+    lines.push(row(["", "", "", "", "", "TOTAL", minsToHHMM(totalWork), ""]));
+
+    // ── Write file ────────────────────────────────────────────────────────────
+    const csv = lines.join("\n");
+    const blob = new Blob(["\uFEFF" + csv], {
+      type: "text/csv;charset=utf-8;",
+    });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `timetrack_${year}_${String(month + 1).padStart(2, "0")}.csv`;
+    a.download = fileName;
     a.click();
+    URL.revokeObjectURL(a.href);
   };
 
+  // ─── Render ──────────────────────────────────────────────────────────────────
   return (
     <div className="p-8 max-w-5xl mx-auto">
       {/* Header */}
@@ -118,26 +198,11 @@ export default function Summary() {
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
         {[
-          {
-            label: "Days worked",
-            val: daysWorked,
-          },
-          {
-            label: "Vacation days",
-            val: vacationEntries.length,
-          },
-          {
-            label: "Sick days",
-            val: sickEntries.length,
-          },
-          {
-            label: "Total hours",
-            val: minsToHHMM(totalWork),
-          },
-          {
-            label: "Target",
-            val: minsToHHMM(target),
-          },
+          { label: "Days worked", val: daysWorked },
+          { label: "Vacation days", val: vacationEntries.length },
+          { label: "Sick days", val: sickEntries.length },
+          { label: "Total hours", val: minsToHHMM(totalWork) },
+          { label: "Target", val: minsToHHMM(target) },
           {
             label: over >= 0 ? "Overtime" : "Deficit",
             val: `${over >= 0 ? "+" : "-"}${minsToHHMM(Math.abs(over))}`,
@@ -190,7 +255,6 @@ export default function Summary() {
                         {formatDate(e.date)}
                       </td>
                       <td className="px-5 py-3">
-                        {/* Type badge */}
                         <span
                           className={`
                           inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium
@@ -223,8 +287,6 @@ export default function Summary() {
                       </td>
                     </tr>
                   ))}
-
-                {/* Total row */}
                 <tr className="bg-slate-50 border-t-2 border-slate-200 font-semibold">
                   <td className="px-5 py-3 text-sm text-slate-700" colSpan={2}>
                     Total
